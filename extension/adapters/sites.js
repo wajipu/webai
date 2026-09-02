@@ -18,24 +18,28 @@ window.WebAIAdapters.grok = window.WebAIAdapters.generic && {
   },
 };
 
-// kimi.com — Moonshot AI chat (React, Lexical-like rich editor)
+// kimi.com — Moonshot AI chat (Vue SPA)
 window.WebAIAdapters.kimi = window.WebAIAdapters.generic && {
   ...window.WebAIAdapters.generic,
   name: 'kimi',
   sel: {
     ...window.WebAIAdapters.generic.sel,
-    // TODO(verify): kimi uses a rich text composer; send button is often the last icon in the toolbar
-    composer: 'div[contenteditable="true"][data-testid*="editor" i], div[contenteditable="true"], textarea',
+    // verified: send button is a div.send-button-container wrapping an svg icon
+    sendButton: 'div.send-button-container, button[type="submit"]',
   },
 };
 
-// chatglm.cn — Zhipu GLM chat (domestic)
+// chatglm.cn — Zhipu GLM chat (Vue SPA, domestic)
 window.WebAIAdapters.glm = window.WebAIAdapters.generic && {
   ...window.WebAIAdapters.generic,
   name: 'glm',
   sel: {
     ...window.WebAIAdapters.generic.sel,
-    // TODO(verify): GLM's composer
-    composer: 'textarea, div[contenteditable="true"]',
+    // verified from live DOM:
+    //   composer: textarea.scroll-display-none inside #search-input-box
+    //   send: .enter-icon-container carries an `empty` class while the
+    //         input is empty (disabled state) — exclude it
+    composer: '#search-input-box textarea, textarea.scroll-display-none',
+    sendButton: '.enter-icon-container:not(.empty), .enter.is-main-chat:not(.empty) img.enter_icon',
   },
 };

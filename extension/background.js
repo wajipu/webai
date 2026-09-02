@@ -155,6 +155,20 @@ async function handleAsk(msg) {
 async function runAsk(id, payload) {
   const timeoutMs = payload.timeout_ms || 300000;
   const site = payload.site || 'chatgpt';
+
+  // hard cap: the whole ask flow must finish within timeoutMs + margin,
+  // otherwise reply with TIMEOUT instead of hanging forever
+  const result = await withTimeout(
+    askOnTab(id, payload, site, timeoutMs),
+    timeoutMs + 30000
+  );
+  if (result === null) {
+    return { ok: false, error: { code: 'TIMEOUT', message: 'extension-side timeout' } };
+  }
+  return result;
+}
+
+async function askOnTab(id, payload, site, timeoutMs) {
   const tab = await ensureSiteTab(site, payload.conversation || null);
 
   // wait for the content script to be alive (tab may pre-date the extension)
@@ -176,6 +190,21 @@ async function runAsk(id, payload) {
     return { ok: true, data: resp.data };
   }
   return { ok: false, error: resp.error };
+}
+
+function withTimeout(promise, ms) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(null), ms);
+    promise
+      .then((v) => {
+        clearTimeout(timer);
+        resolve(v);
+      })
+      .catch((e) => {
+        clearTimeout(timer);
+        resolve({ ok: false, error: { code: 'INTERNAL', message: String(e && e.message ? e.message : e) } });
+      });
+  });
 }
 
 async function ensureSiteTab(site, conversationUrl) {
@@ -202,16 +231,38 @@ async function ensureSiteTab(site, conversationUrl) {
 }
 
 function waitTabLoaded(tabId) {
+  // event-driven + bounded: setInterval polling can outlive the MV3 service
+  // worker (it gets reaped after ~30s idle), which would strand the ask
   return new Promise((resolve) => {
-    const check = async () => {
-      const t = await chrome.tabs.get(tabId).catch(() => null);
-      if (t && t.status === 'complete') {
-        resolve(t);
-      } else {
-        setTimeout(check, 500);
-      }
+    const started = Date.now();
+    const MAX_WAIT = 25000;
+    const finish = (tab) => {
+      clearInterval(timer);
+      resolve(tab);
     };
-    setTimeout(check, 800);
+    const onUpdated = (id, info, tab) => {
+      if (id === tabId && info.status === 'complete') finish(tab);
+    };
+    chrome.tabs.onUpdated.addListener(onUpdated);
+    const timer = setInterval(() => {
+      if (Date.now() - started > MAX_WAIT) {
+        chrome.tabs.onUpdated.removeListener(onUpdated);
+        finish(null); // probe loop downstream will handle the rest
+        return;
+      }
+      chrome.tabs.get(tabId).then((t) => {
+        if (t && t.status === 'complete') {
+          chrome.tabs.onUpdated.removeListener(onUpdated);
+          finish(t);
+        }
+      }).catch(() => {});
+    }, 2000);
+    chrome.tabs.get(tabId).then((t) => {
+      if (t && t.status === 'complete') {
+        chrome.tabs.onUpdated.removeListener(onUpdated);
+        finish(t);
+      }
+    }).catch(() => {});
   });
 }
 

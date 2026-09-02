@@ -40,6 +40,13 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+// textarea holds its content in .value, contenteditable in innerText
+function composerText(el) {
+  if (!el) return '';
+  if (el.value !== undefined) return String(el.value);
+  return el.innerText || '';
+}
+
 async function waitFor(fn, timeoutMs, intervalMs = 500) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -100,6 +107,16 @@ async function handleAsk(msg) {
   // which fires real beforeinput/input events)
   composer.focus();
   document.execCommand('insertText', false, message);
+  // belt & braces: for plain <textarea> composers (Vue/React controlled),
+  // set .value directly and fire input/change so the framework updates its
+  // state (e.g. removes a disabled `empty` class from the send button)
+  if (composer.value !== undefined) {
+    composer.value = message;
+    composer.dispatchEvent(new Event('input', { bubbles: true }));
+    composer.dispatchEvent(new Event('change', { bubbles: true }));
+  } else {
+    composer.dispatchEvent(new Event('input', { bubbles: true }));
+  }
 
   // ---- send (prefer a dedicated send button; fall back to Enter)
   const sent = await waitFor(() => {
@@ -113,7 +130,7 @@ async function handleAsk(msg) {
 
   if (!sent) {
     await sleep(2000);
-    if (composer.innerText.trim().length > 0) {
+    if (composerText(composer).length > 0) {
       return {
         ok: false,
         error: {
@@ -125,7 +142,7 @@ async function handleAsk(msg) {
   }
 
   // wait until the composer actually cleared (message accepted)
-  await waitFor(() => composer.innerText.trim().length === 0, 20000, 500).catch(() => {});
+  await waitFor(() => composerText(composer).length === 0, 20000, 500).catch(() => {});
 
   // ---- wait for generation to finish
   const deadline = Date.now() + timeoutMs;
