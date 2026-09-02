@@ -39,11 +39,17 @@ jobs:
       - name: Build (release)
         run: cargo build --release --target ${{ matrix.target }}
 
+      - name: Rename binary
+        shell: bash
+        run: |
+          bin="target/${{ matrix.target }}/release/webai${{ runner.os == 'Windows' && '.exe' || '' }}"
+          mv "$bin" "${{ matrix.artifact }}"
+
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: target/${{ matrix.target }}/release/webai${{ runner.os == 'Windows' && '.exe' || '' }}
+          path: ${{ matrix.artifact }}
           if-no-files-found: error
 
   package-extension:
