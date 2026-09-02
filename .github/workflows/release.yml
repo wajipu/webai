@@ -59,7 +59,7 @@ jobs:
       - name: Zip extension
         run: |
           cd extension
-          zip -r ../webai-extension.zip manifest.json background.js content.js popup.html popup.js
+          zip -r ../webai-extension.zip manifest.json background.js content.js popup.html popup.js adapters
       - uses: actions/upload-artifact@v4
         with:
           name: webai-extension
