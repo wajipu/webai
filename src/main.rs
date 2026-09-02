@@ -9,6 +9,7 @@
 
 mod daemon;
 mod mcp;
+mod openai;
 mod protocol;
 mod state;
 
@@ -70,6 +71,12 @@ enum Command {
     },
     /// Run as a stdio MCP server (register with Claude Code / Grok Code / Cursor)
     Mcp,
+    /// OpenAI-compatible chat endpoint so opencode can use web AIs as regular models
+    Openai {
+        /// Port to listen on (default 19001)
+        #[arg(long, short, default_value_t = openai::OPENAI_PORT)]
+        port: u16,
+    },
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -100,6 +107,7 @@ async fn main() {
             .map(|e| e.to_string()),
         Command::Status { port } => cmd_status(port).await.err().map(|e| e.to_string()),
         Command::Mcp => mcp::run().await.err().map(|e| e.to_string()),
+        Command::Openai { port } => openai::run(port).await.err().map(|e| e.to_string()),
     };
     if let Some(e) = code {
         eprintln!("error: {e}");
