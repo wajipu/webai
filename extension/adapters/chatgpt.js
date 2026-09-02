@@ -25,3 +25,6 @@ const Adapter = {
     );
   },
 };
+
+window.WebAIAdapters = window.WebAIAdapters || {};
+window.WebAIAdapters.chatgpt = Adapter;
