@@ -8,6 +8,27 @@
 Rust 本地守护进程 + MV3 Chrome 扩展 + CLI。CLI 发消息,扩展把你**已登录**的
 chatgpt.com 当执行引擎,等它生成完把回复取回终端。
 
+## 下载即用(GitHub Releases)
+
+打一个 tag 就自动出四个平台二进制 + 扩展 zip:
+
+```bash
+# 1. 下载二进制(Release 页面或一键脚本)
+curl -fsSL https://raw.githubusercontent.com/wajipu/webai/main/install.sh | bash
+export PATH="$HOME/.webai/bin:$PATH"
+
+# 2. 起 daemon
+webai serve
+
+# 3. 解压 webai-extension.zip,chrome://extensions → 开发者模式 → 加载已解压的扩展程序
+#    (扩展图标应变 ON)
+
+# 4. 提问
+webai ask "用一句话解释什么是 Rust 的所有权"
+```
+
+其他平台:Release 资产里有 `webai-darwin-arm64`、`webai-darwin-x64`、`webai-linux-x64`、`webai-win-x64.exe`。
+
 ## 组件
 
 | 目录 | 说明 |

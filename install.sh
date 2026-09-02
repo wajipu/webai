@@ -6,7 +6,7 @@
 #
 set -euo pipefail
 
-REPO="${WEBAI_REPO:-<owner>/webai}"
+REPO="${WEBAI_REPO:-wajipu/webai}"
 VERSION="${WEBAI_VERSION:-latest}"
 DEST="${WEBAI_DEST:-$HOME/.webai/bin}"
 
