@@ -8,6 +8,7 @@
 //!                       and streams the finished reply back to the terminal.
 
 mod daemon;
+mod mcp;
 mod protocol;
 mod state;
 
@@ -67,6 +68,8 @@ enum Command {
         #[arg(long, short, default_value_t = protocol::DEFAULT_PORT)]
         port: u16,
     },
+    /// Run as a stdio MCP server (register with Claude Code / Grok Code / Cursor)
+    Mcp,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -96,6 +99,7 @@ async fn main() {
             .err()
             .map(|e| e.to_string()),
         Command::Status { port } => cmd_status(port).await.err().map(|e| e.to_string()),
+        Command::Mcp => mcp::run().await.err().map(|e| e.to_string()),
     };
     if let Some(e) = code {
         eprintln!("error: {e}");
@@ -104,6 +108,57 @@ async fn main() {
 }
 
 // ------------------------------------------------------------------ ask
+
+/// Full ask pipeline shared by the CLI and the MCP server:
+/// constraint injection (per-conversation, fingerprint-aware) + one round trip.
+pub async fn ask_flow(
+    message: &str,
+    port: u16,
+    timeout_secs: u64,
+    conversation: Option<String>,
+    reinit: bool,
+    site: &str,
+    system: &[String],
+    skills: &[String],
+    on_log: impl Fn(&str),
+) -> anyhow::Result<AskResultData> {
+    if message.trim().is_empty() {
+        anyhow::bail!("message is empty");
+    }
+
+    let init = build_init(system, skills)?; // (text, fingerprint)
+
+    let conv_key = conversation.as_deref().map(state::key_from_conversation);
+
+    // Inject constraints once per conversation (or on fingerprint change,
+    // or when --reinit forces it).
+    if let Some((text, fp)) = &init {
+        match &conv_key {
+            Some(key) => {
+                let already = state::is_initialized(key, fp);
+                if already && !reinit {
+                    on_log(&format!("constraints already loaded for {key}, skipping injection"));
+                } else {
+                    if reinit && already {
+                        on_log(&format!("--reinit: forcing constraint re-injection into {key}"));
+                    } else {
+                        on_log(&format!("injecting constraints into {key} (fingerprint {fp})…"));
+                    }
+                    send_one(port, conversation.clone(), text, timeout_secs, site, true).await?;
+                    state::mark_initialized(key, fp)?;
+                    on_log(&format!("constraints injected, marked {key} initialized"));
+                }
+            }
+            None => {
+                // brand-new conversation each time: inject before every ask
+                on_log("injecting constraints (new conversation)…");
+                send_one(port, None, text, timeout_secs, site, true).await?;
+            }
+        }
+    }
+
+    send_one(port, conversation, message, timeout_secs, site, false).await
+}
 
 async fn cmd_ask(
     message: &str,
@@ -116,56 +171,18 @@ async fn cmd_ask(
     system: &[String],
     skills: &[String],
 ) -> anyhow::Result<()> {
-    if message.trim().is_empty() {
-        anyhow::bail!("message is empty");
-    }
-
-    let init = build_init(system, skills)?; // (text, fingerprint)
-
-    let conv_key = conversation
-        .as_deref()
-        .map(state::key_from_conversation);
-
-    // Inject constraints once per conversation (or on fingerprint change,
-    // or when --reinit forces it).
-    if let Some((text, fp)) = &init {
-        match &conv_key {
-            Some(key) => {
-                let already = state::is_initialized(key, fp);
-                if already && !reinit {
-                    eprintln!("→ constraints already loaded for {key}, skipping injection");
-                } else {
-                    if reinit && already {
-                        eprintln!("→ --reinit: forcing constraint re-injection into {key}");
-                    } else {
-                        eprintln!("→ injecting constraints into {key} (fingerprint {fp})…");
-                    }
-                    send_one(port, conversation.clone(), text, timeout_secs, site, true).await?;
-                    state::mark_initialized(key, fp)?;
-                    eprintln!("→ constraints injected, marked {key} initialized");
-                }
-            }
-            None => {
-                // brand-new conversation each time: inject before every ask
-                eprintln!("→ injecting constraints (new conversation)…");
-                send_one(port, None, text, timeout_secs, site, true).await?;
-            }
+    let log = |s: &str| eprintln!("→ {s}");
+    let d = ask_flow(message, port, timeout_secs, conversation, reinit, site, system, skills, log)
+        .await?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&d)?);
+    } else {
+        print!("{}", d.text);
+        if !d.text.ends_with('\n') {
+            println!();
         }
     }
-
-    send_one(port, conversation, message, timeout_secs, site, false)
-        .await
-        .and_then(|d| {
-            if json {
-                println!("{}", serde_json::to_string_pretty(&d)?);
-            } else {
-                print!("{}", d.text);
-                if !d.text.ends_with('\n') {
-                    println!();
-                }
-            }
-            Ok(())
-        })
+    Ok(())
 }
 
 /// One round trip through the daemon. `quiet` suppresses the reply echo and
