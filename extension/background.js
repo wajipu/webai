@@ -11,19 +11,19 @@ const DEFAULT_WS_URL = 'ws://127.0.0.1:8765';
 // site key -> { urls (tab match patterns), home (default tab to open) }
 const SITES = {
   chatgpt: {
-    urls: ['https://chatgpt.com/*', 'https://chat.openai.com/*'],
+    urls: ['https://chatgpt.com/*', 'https://www.chatgpt.com/*', 'https://chat.openai.com/*'],
     home: 'https://chatgpt.com/',
   },
   grok: {
-    urls: ['https://grok.com/*', 'https://x.com/*'],
+    urls: ['https://grok.com/*', 'https://www.grok.com/*', 'https://x.com/*', 'https://www.x.com/*'],
     home: 'https://grok.com/',
   },
   kimi: {
-    urls: ['https://kimi.com/*', 'https://moonshot.cn/*'],
+    urls: ['https://kimi.com/*', 'https://www.kimi.com/*', 'https://moonshot.cn/*', 'https://www.moonshot.cn/*'],
     home: 'https://kimi.com/',
   },
   glm: {
-    urls: ['https://chatglm.cn/*', 'https://z.ai/*'],
+    urls: ['https://chatglm.cn/*', 'https://www.chatglm.cn/*', 'https://z.ai/*', 'https://www.z.ai/*'],
     home: 'https://chatglm.cn/',
   },
 };
@@ -235,7 +235,11 @@ async function waitContentScriptReady(tabId) {
     } catch {}
     await sleep(1000);
   }
-  throw new Error('chatgpt.com tab is not reachable — is it still open?');
+  const t = await chrome.tabs.get(tabId).catch(() => null);
+  throw new Error(
+    `page is not reachable — ${t && t.url ? t.url : 'tab gone'}. ` +
+      'Is the tab still open? Did the site redirect to a host the extension does not cover?'
+  );
 }
 
 function sleep(ms) {
