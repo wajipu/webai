@@ -12,6 +12,7 @@
 //!   * streaming returns the reply as OpenAI chunk deltas (with SSE keepalive
 //!     while the web page is still generating)
 
+use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
 
 use axum::extract::State;
@@ -20,7 +21,7 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::IntoResponse;
 use axum::routing::post;
 use axum::{Json, Router};
-use futures_util::stream::{self, Stream, StreamExt};
+use futures_util::stream::Stream;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -31,6 +32,11 @@ pub const OPENAI_PORT: u16 = 19001;
 #[derive(Clone, Default)]
 struct OpenAiState {
     last_conversation: Arc<Mutex<Option<String>>>,
+    // serializes ask handling so concurrent requests never hit the
+    // extension's single-session BUSY state
+    serial: Arc<tokio::sync::Mutex<()>>,
+    // idempotent retry cache: (request fingerprint, model, result text)
+    recent: Arc<Mutex<Option<(u64, String, String)>>>,
 }
 
 pub async fn run(port: u16) -> anyhow::Result<()> {
@@ -90,24 +96,82 @@ fn site_for_model(model: &str) -> &'static str {
 async fn chat_completions(
     State(state): State<OpenAiState>,
     Json(req): Json<ChatRequest>,
-) -> impl IntoResponse {
-    // assemble the prompt: system messages become an injected constraint
-    let system_parts: Vec<String> = req
-        .messages
-        .iter()
-        .filter(|m| m.role == "system" && !m.text().trim().is_empty())
-        .map(|m| m.text())
-        .collect();
-    let user_msg = req
-        .messages
-        .iter()
-        .filter(|m| m.role == "user")
-        .last()
-        .map(|m| m.text())
-        .unwrap_or_default();
-
+) -> axum::response::Response {
+    let model_id = req.model.clone();
     let site = site_for_model(&req.model);
+    let (user_msg, fp) = {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        for m in &req.messages {
+            m.role.hash(&mut hasher);
+            m.text().hash(&mut hasher);
+        }
+        let fp = hasher.finish();
+        let user_msg = req
+            .messages
+            .iter()
+            .filter(|m| m.role == "user")
+            .last()
+            .map(|m| m.text())
+            .unwrap_or_default();
+        let system_parts: Vec<String> = req
+            .messages
+            .iter()
+            .filter(|m| m.role == "system" && !m.text().trim().is_empty())
+            .map(|m| m.text())
+            .collect();
+        let user_msg = if system_parts.is_empty() {
+            user_msg
+        } else {
+            format!(
+                "[SYSTEM CONSTRAINTS]\n{}\n\n[END CONSTRAINTS]\n\n{}",
+                system_parts.join("\n\n"),
+                user_msg
+            )
+        };
+        (user_msg, fp)
+    };
 
+    if req.stream {
+        // The SSE stream starts immediately, so its keepalive keeps the
+        // client connection alive while the web page is generating. All the
+        // slow work happens inside the stream.
+        let state = state.clone();
+        let stream = async_stream::stream! {
+            // idempotent retry: same request within the last 2 minutes
+            let recent = state.recent.lock().unwrap().clone();
+            if let Some((f, model, text)) = recent {
+                if f == fp && model == model_id {
+                    for e in sse_chunks(model_id.clone(), &text) { yield Ok::<Event, std::convert::Infallible>(e); }
+                    return;
+                }
+            }
+            let _guard = state.serial.lock().await;
+            let log = |_s: &str| {};
+            let conversation = state.last_conversation.lock().unwrap().clone();
+            let result = crate::ask_flow(
+                &user_msg, DEFAULT_PORT, 600, conversation, false, site, &[], &[], log,
+            )
+            .await;
+            match result {
+                Ok(data) => {
+                    *state.last_conversation.lock().unwrap() = Some(data.url.clone());
+                    *state.recent.lock().unwrap() = Some((fp, model_id.clone(), data.text.clone()));
+                    for e in sse_chunks(model_id, &data.text) {
+                        yield Ok::<Event, std::convert::Infallible>(e);
+                    }
+                }
+                Err(e) => {
+                    for e in sse_error_chunks(model_id, &e.to_string()) {
+                        yield Ok::<Event, std::convert::Infallible>(e);
+                    }
+                }
+            }
+        };
+        return Sse::new(stream).keep_alive(KeepAlive::new()).into_response();
+    }
+
+    // non-streaming: straightforward request/response
+    let _guard = state.serial.lock().await;
     let log = |_s: &str| {};
     let conversation = state.last_conversation.lock().unwrap().clone();
     let result = crate::ask_flow(
@@ -122,44 +186,33 @@ async fn chat_completions(
         log,
     )
     .await;
-
-    let model_id = req.model.clone();
-    let (text, err) = match result {
+    match result {
         Ok(data) => {
             *state.last_conversation.lock().unwrap() = Some(data.url.clone());
-            (data.text, None)
-        }
-        Err(e) => (String::new(), Some(e.to_string())),
-    };
-
-    if let Some(e) = err {
-        return (
-            StatusCode::BAD_GATEWAY,
-            Json(json!({"error":{"message":e,"type":"webai_error"}})),
-        )
-            .into_response();
-    }
-
-    if req.stream {
-        let stream = stream::iter(sse_chunks(model_id, &text))
-            .map(Ok::<_, std::convert::Infallible>);
-        Sse::new(stream)
-            .keep_alive(KeepAlive::new())
+            *state.recent.lock().unwrap() = Some((fp, model_id.clone(), data.text.clone()));
+            Json(json!({
+                "id": "chatcmpl-webai",
+                "object": "chat.completion",
+                "created": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0),
+                "model": model_id,
+                "choices": [{
+                    "index": 0,
+                    "message": {"role": "assistant", "content": data.text},
+                    "finish_reason": "stop"
+                }]
+            }))
             .into_response()
-    } else {
-        Json(json!({
-            "id": "chatcmpl-webai",
-            "object": "chat.completion",
-            "created": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0),
-            "model": model_id,
-            "choices": [{
-                "index": 0,
-                "message": {"role": "assistant", "content": text},
-                "finish_reason": "stop"
-            }]
-        }))
-        .into_response()
+        }
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"error":{"message":e.to_string(),"type":"webai_error"}})),
+        )
+            .into_response(),
     }
+}
+
+fn sse_error_chunks(model_id: String, msg: &str) -> Vec<Event> {
+    sse_chunks(model_id, &format!("[webai error] {msg}"))
 }
 
 fn sse_chunks(model_id: String, text: &str) -> Vec<Event> {
