@@ -1,0 +1,23 @@
+[package]
+name = "webai"
+version = "0.1.0"
+edition = "2021"
+description = "CLI that talks to free web AIs (chatgpt.com etc.) through a Chrome extension bridge"
+
+[[bin]]
+name = "webai"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = "0.26"
+futures-util = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+uuid = { version = "1", features = ["v4"] }
+
+[profile.release]
+strip = true
+lto = true

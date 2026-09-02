@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body { font: 13px/1.5 system-ui, -apple-system, sans-serif; width: 260px; margin: 0; padding: 12px; }
+    h1 { font-size: 14px; margin: 0 0 8px; }
+    .row { margin: 6px 0; }
+    .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #ccc; vertical-align: middle; margin-right: 6px; }
+    .dot.on { background: #1a7f37; }
+    .dot.busy { background: #b26a00; }
+    input { width: 100%; box-sizing: border-box; padding: 4px 6px; font-size: 12px; }
+    button { width: 100%; margin-top: 8px; padding: 5px; }
+    #log { margin-top: 8px; font-size: 11px; color: #666; word-break: break-all; }
+  </style>
+</head>
+<body>
+  <h1>WebAI Bridge</h1>
+  <div class="row"><span class="dot" id="dot"></span><span id="status">…</span></div>
+  <div class="row"><label>Daemon URL</label><input id="wsUrl" placeholder="ws://127.0.0.1:8765" /></div>
+  <button id="save">Save &amp; Reconnect</button>
+  <div id="log"></div>
+  <script src="popup.js"></script>
+</body>
+</html>
