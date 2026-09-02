@@ -37,6 +37,9 @@ struct OpenAiState {
     serial: Arc<tokio::sync::Mutex<()>>,
     // idempotent retry cache: (request fingerprint, model, result text)
     recent: Arc<Mutex<Option<(u64, String, String)>>>,
+    // last-attempt guard: (fingerprint, unix seconds) — a replayed request
+    // within 90s is rejected instead of being sent to the page again
+    last_attempt: Arc<Mutex<Option<(u64, u64)>>>,
 }
 
 pub async fn run(port: u16) -> anyhow::Result<()> {
@@ -133,6 +136,21 @@ async fn chat_completions(
                     for e in sse_chunks(model_id.clone(), &text) { yield Ok::<Event, std::convert::Infallible>(e); }
                     return;
                 }
+            }
+            // replayed request while the first attempt is still in flight:
+            // reject rather than send the same message to the page twice
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+            {
+                let last = state.last_attempt.lock().unwrap().clone();
+                if let Some((f, at)) = last {
+                    if f == fp && now.saturating_sub(at) < 90 {
+                        for e in sse_chunks(model_id.clone(), &format!("[webai] duplicate request — previous attempt is still running, do not retry yet")) {
+                            yield Ok::<Event, std::convert::Infallible>(e);
+                        }
+                        return;
+                    }
+                }
+                *state.last_attempt.lock().unwrap() = Some((fp, now));
             }
             let _guard = state.serial.lock().await;
             let log = |_s: &str| {};

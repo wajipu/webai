@@ -76,6 +76,23 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
 async function handleAsk(msg) {
   const { message, timeout_ms: timeoutMs = 300000 } = msg.payload;
+
+  // keep the MV3 service worker alive while we wait: a pending
+  // tabs.sendMessage promise does NOT count as activity, so without this the
+  // SW gets reaped after ~30s idle, the result is lost, and the client
+  // retries → the same message gets sent to the page twice.
+  const keepalive = setInterval(() => {
+    chrome.runtime.sendMessage({ type: 'keepalive' }).catch(() => {});
+  }, 15000);
+
+  try {
+    return await handleAskInner(message, timeoutMs);
+  } finally {
+    clearInterval(keepalive);
+  }
+}
+
+async function handleAskInner(message, timeoutMs) {
   const adapter = currentAdapter();
   const sel = adapter.sel;
 

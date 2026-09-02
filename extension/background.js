@@ -115,6 +115,12 @@ setInterval(connect, 5000);
 
 chrome.runtime.onStartup.addListener(connect);
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg && msg.type === 'keepalive') {
+    // content script pings us while the page generates; receiving a message
+    // resets the idle timer so the service worker is not reaped mid-ask
+    sendResponse({ ok: true });
+    return false;
+  }
   if (msg && msg.type === 'getBridgeStatus') {
     sendResponse({ status: wsState, busy });
     return false;
