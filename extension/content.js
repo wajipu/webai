@@ -157,16 +157,28 @@ async function handleAskInner(message, timeoutMs) {
   // wait until the composer actually cleared (message accepted)
   await waitFor(() => composerText(composer).length === 0, 20000, 500).catch(() => {});
 
-  // ---- wait for generation to finish
+  // ---- wait for generation to finish, streaming deltas as it goes
   const deadline = Date.now() + timeoutMs;
   let lastText = '';
   let stableRounds = 0;
+  const streamId = msg.id;
 
   while (Date.now() < deadline) {
     const generating = !!$(sel.stopButton) || !!document.querySelector('.result-streaming');
     const nodes = document.querySelectorAll(sel.assistantMsg);
     const last = nodes.length ? nodes[nodes.length - 1] : null;
     const text = last ? last.innerText.trim() : '';
+
+    // stream: forward only the newly appended portion (cheap, no re-render
+    // needed — the page appends to the same node while generating)
+    if (text.length > lastText.length) {
+      const delta = text.slice(lastText.length);
+      lastText = text;
+      chrome.runtime.sendMessage({ type: 'ask_chunk', id: streamId, delta }).catch(() => {});
+    } else if (text !== lastText) {
+      // text was rewritten (rare): skip deltas; the final result is sent whole
+      lastText = text;
+    }
 
     if (!generating && text.length > 0) {
       if (text === lastText) {
@@ -183,12 +195,10 @@ async function handleAskInner(message, timeoutMs) {
           };
         }
       } else {
-        lastText = text;
         stableRounds = 1;
       }
     } else {
       stableRounds = 0;
-      lastText = text;
     }
     await sleep(1500);
   }

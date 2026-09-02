@@ -115,6 +115,12 @@ setInterval(connect, 5000);
 
 chrome.runtime.onStartup.addListener(connect);
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg && msg.type === 'ask_chunk') {
+    // relay streaming deltas from the content script to the daemon
+    wsSend({ type: 'ask_chunk', id: msg.id, delta: msg.delta });
+    sendResponse({ ok: true });
+    return false;
+  }
   if (msg && msg.type === 'keepalive') {
     // content script pings us while the page generates; receiving a message
     // resets the idle timer so the service worker is not reaped mid-ask

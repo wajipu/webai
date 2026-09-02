@@ -345,6 +345,90 @@ fn fingerprint(s: &str) -> String {
 
 // ------------------------------------------------------------------ misc
 
+// ------------------------------------------------------------ streaming
+
+/// Streaming variant of send_one: returns a channel that receives incremental
+/// `delta` texts as the page generates, plus a handle that resolves to the
+/// final AskResultData. Use it for SSE passthrough.
+pub async fn send_one_stream(
+    port: u16,
+    conversation: Option<String>,
+    message: &str,
+    timeout_secs: u64,
+    site: &str,
+) -> anyhow::Result<(
+    tokio::sync::mpsc::UnboundedReceiver<String>,
+    tokio::task::JoinHandle<anyhow::Result<AskResultData>>,
+)> {
+    let url = format!("ws://127.0.0.1:{port}");
+    let (mut ws, _) = tokio_tungstenite::connect_async(&url).await.map_err(|e| {
+        anyhow::anyhow!("cannot connect to daemon at {url}: {e}\n  run `webai serve` first")
+    })?;
+
+    send_json(&mut ws, &serde_json::json!({"type":"hello","role":"cli"})).await?;
+    let id = Uuid::new_v4().to_string();
+    let ask = serde_json::json!({
+        "type": "ask",
+        "id": id,
+        "payload": {
+            "message": message,
+            "conversation": conversation,
+            "timeout_ms": timeout_secs * 1000,
+            "site": site,
+            "stream": true,
+        }
+    });
+    send_json(&mut ws, &ask).await?;
+
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let task = tokio::spawn(async move {
+        let deadline = std::time::Instant::now() + Duration::from_secs(timeout_secs + 15);
+        let result = loop {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                break Err(anyhow::anyhow!("timed out after {timeout_secs}s waiting for a reply"));
+            }
+            let msg = tokio::time::timeout(remaining, ws.next())
+                .await
+                .map_err(|_| anyhow::anyhow!("timed out waiting for reply"))?
+                .ok_or_else(|| anyhow::anyhow!("daemon closed the connection"))?
+                .map_err(|e| anyhow::anyhow!("ws error: {e}"))?;
+            match msg {
+                Message::Text(t) => {
+                    let v: serde_json::Value = serde_json::from_str(&t)?;
+                    let ty = v.get("type").and_then(|x| x.as_str()).unwrap_or("");
+                    if ty == "ask_chunk" && v.get("id").and_then(|x| x.as_str()) == Some(&id) {
+                        if let Some(d) = v.get("delta").and_then(|x| x.as_str()) {
+                            let _ = tx.send(d.to_string());
+                        }
+                    } else if ty == "ask_result" && v.get("id").and_then(|x| x.as_str()) == Some(&id)
+                    {
+                        if v.get("ok").and_then(|x| x.as_bool()) == Some(true) {
+                            break Ok(AskResultData {
+                                text: v.pointer("/data/text").and_then(|x| x.as_str()).unwrap_or_default().to_string(),
+                                url: v.pointer("/data/url").and_then(|x| x.as_str()).unwrap_or_default().to_string(),
+                                title: v.pointer("/data/title").and_then(|x| x.as_str()).unwrap_or_default().to_string(),
+                            });
+                        } else {
+                            let code = v.pointer("/error/code").and_then(|x| x.as_str()).unwrap_or("?");
+                            let m = v.pointer("/error/message").and_then(|x| x.as_str()).unwrap_or("?");
+                            break Err(anyhow::anyhow!("[{code}] {m}"));
+                        }
+                    }
+                }
+                Message::Close(_) => break Err(anyhow::anyhow!("daemon closed the connection")),
+                _ => {}
+            }
+        };
+        // all deltas are queued before the result; drop tx so the receiver
+        // sees None once it has drained them
+        drop(tx);
+        result
+    });
+
+    Ok((rx, task))
+}
+
 async fn cmd_status(port: u16) -> anyhow::Result<()> {
     let url = format!("ws://127.0.0.1:{port}");
     let (mut ws, _) = tokio_tungstenite::connect_async(&url).await.map_err(|e| {

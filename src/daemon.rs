@@ -194,6 +194,16 @@ async fn on_text(
                 }
             }
         }
+        Some(Role::Extension) if ty == "ask_chunk" => {
+            // streaming: forward the incremental text to the waiting cli
+            let id = v.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            if let Some(cli_id) = s.pending.get(&id).cloned() {
+                let msg = Message::Text(text.into());
+                if let Some(c) = s.conns.get(&cli_id) {
+                    let _ = c.tx.send(msg);
+                }
+            }
+        }
         Some(Role::Extension) if ty == "ask_result" => {
             let res: AskResult = serde_json::from_value(v)?;
             if let Some(cli_id) = s.pending.remove(&res.id) {

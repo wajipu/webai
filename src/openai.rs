@@ -155,21 +155,74 @@ async fn chat_completions(
             let _guard = state.serial.lock().await;
             let log = |_s: &str| {};
             let conversation = state.last_conversation.lock().unwrap().clone();
-            let result = crate::ask_flow(
-                &user_msg, DEFAULT_PORT, 600, conversation, false, site, &[], &[], log,
+
+            // streaming round trip: deltas arrive as the page generates
+            let (mut rx, mut handle) = match crate::send_one_stream(
+                DEFAULT_PORT,
+                conversation,
+                &user_msg,
+                600,
+                site,
             )
-            .await;
-            match result {
-                Ok(data) => {
-                    *state.last_conversation.lock().unwrap() = Some(data.url.clone());
-                    *state.recent.lock().unwrap() = Some((fp, model_id.clone(), data.text.clone()));
-                    for e in sse_chunks(model_id, &data.text) {
-                        yield Ok::<Event, std::convert::Infallible>(e);
-                    }
-                }
+            .await
+            {
+                Ok(pair) => pair,
                 Err(e) => {
                     for e in sse_error_chunks(model_id, &e.to_string()) {
                         yield Ok::<Event, std::convert::Infallible>(e);
+                    }
+                    return;
+                }
+            };
+
+            let mut emitted = 0usize;
+            loop {
+                tokio::select! {
+                    Some(delta) = rx.recv() => {
+                        emitted += delta.len();
+                        for e in sse_chunk_events(model_id.clone(), &delta) {
+                            yield Ok::<Event, std::convert::Infallible>(e);
+                        }
+                    }
+                    res = &mut handle => {
+                        // drain any last queued deltas
+                        while let Ok(d) = rx.try_recv() {
+                            emitted += d.len();
+                            for e in sse_chunk_events(model_id.clone(), &d) {
+                                yield Ok::<Event, std::convert::Infallible>(e);
+                            }
+                        }
+                        match res {
+                            Ok(Ok(data)) => {
+                                *state.last_conversation.lock().unwrap() = Some(data.url.clone());
+                                *state.recent.lock().unwrap() = Some((fp, model_id.clone(), data.text.clone()));
+                                // the final result is authoritative: top up any
+                                // text the deltas did not cover (rewrite case)
+                                if emitted < data.text.len() {
+                                    let tail = &data.text[emitted..];
+                                    for e in sse_chunk_events(model_id.clone(), tail) {
+                                        yield Ok::<Event, std::convert::Infallible>(e);
+                                    }
+                                }
+                                yield Ok::<Event, std::convert::Infallible>(
+                                    Event::default().event("chat.completion.chunk").data(
+                                        json!({"id":"chatcmpl-webai","object":"chat.completion.chunk","model":model_id,"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}).to_string(),
+                                    ),
+                                );
+                                yield Ok::<Event, std::convert::Infallible>(Event::default().event("done").data("[DONE]"));
+                            }
+                            Ok(Err(e)) => {
+                                for e in sse_error_chunks(model_id, &e.to_string()) {
+                                    yield Ok::<Event, std::convert::Infallible>(e);
+                                }
+                            }
+                            Err(e) => {
+                                for e in sse_error_chunks(model_id, &format!("internal: {e}")) {
+                                    yield Ok::<Event, std::convert::Infallible>(e);
+                                }
+                            }
+                        }
+                        break;
                     }
                 }
             }
@@ -220,6 +273,27 @@ async fn chat_completions(
 
 fn sse_error_chunks(model_id: String, msg: &str) -> Vec<Event> {
     sse_chunks(model_id, &format!("[webai error] {msg}"))
+}
+
+fn sse_chunk_events(model_id: String, delta: &str) -> Vec<Event> {
+    let mut events = Vec::new();
+    for part in delta.as_bytes().chunks(120) {
+        let part = String::from_utf8_lossy(part).to_string();
+        events.push(
+            Event::default()
+                .event("chat.completion.chunk")
+                .data(
+                    json!({
+                        "id": "chatcmpl-webai",
+                        "object": "chat.completion.chunk",
+                        "model": model_id,
+                        "choices": [{"index": 0, "delta": {"content": part}, "finish_reason": null}]
+                    })
+                    .to_string(),
+                ),
+        );
+    }
+    events
 }
 
 fn sse_chunks(model_id: String, text: &str) -> Vec<Event> {
