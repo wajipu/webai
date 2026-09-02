@@ -1,6 +1,6 @@
 [package]
 name = "webai"
-version = "0.1.0"
+version = "0.2.2"
 edition = "2021"
 description = "CLI that talks to free web AIs (chatgpt.com etc.) through a Chrome extension bridge"
 
