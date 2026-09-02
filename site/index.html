@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>webai — 命令行驱动网页版免费 AI</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --border: #30363d; --fg: #e6edf3;
+    --muted: #8b949e; --accent: #58a6ff; --green: #3fb950; --red: #f85149;
+    --yellow: #d29922;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--fg); font: 15px/1.7 system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 40px 24px 80px; }
+  header { text-align: center; margin-bottom: 48px; }
+  h1 { font-size: 40px; letter-spacing: -0.5px; }
+  h1 span { color: var(--accent); }
+  .tagline { color: var(--muted); font-size: 17px; margin-top: 10px; }
+  .badges { margin-top: 18px; }
+  .badges a { color: var(--fg); background: var(--panel); border: 1px solid var(--border); padding: 6px 14px; border-radius: 99px; text-decoration: none; font-size: 13px; margin: 0 4px; display: inline-block; }
+  .badges a:hover { border-color: var(--accent); color: var(--accent); }
+  section { margin: 56px 0; }
+  h2 { font-size: 24px; margin-bottom: 8px; }
+  h2 .no { color: var(--accent); margin-right: 8px; }
+  .sub { color: var(--muted); margin-bottom: 24px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 24px; }
+  pre { background: #010409; border: 1px solid var(--border); border-radius: 8px; padding: 16px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  code { background: #21262d; border-radius: 4px; padding: 1px 6px; font-size: 13px; }
+  pre code { background: none; padding: 0; }
+  .flow { display: flex; flex-direction: column; gap: 0; align-items: center; }
+  .node { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px 22px; text-align: center; min-width: 200px; }
+  .node b { display: block; font-size: 15px; }
+  .node span { color: var(--muted); font-size: 12.5px; }
+  .node.ai { border-color: var(--green); }
+  .node.rust { border-color: var(--accent); }
+  .node.ext { border-color: var(--yellow); }
+  .arrow { color: var(--muted); font-size: 18px; padding: 6px 0; }
+  .arrow .tag { font-size: 11px; display: block; color: var(--muted); opacity: .8; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 640px) { .cols { grid-template-columns: 1fr; } }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; }
+  .ok { color: var(--green); }
+  .warn { color: var(--yellow); }
+  footer { text-align: center; color: var(--muted); font-size: 13px; margin-top: 60px; }
+  .steps { counter-reset: step; list-style: none; }
+  .steps li { counter-increment: step; position: relative; padding: 10px 0 10px 44px; border-bottom: 1px solid var(--border); }
+  .steps li:last-child { border-bottom: none; }
+  .steps li::before { content: counter(step); position: absolute; left: 0; top: 12px; width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: #0d1117; font-weight: 700; display: flex; align-items: center; justify-content: center; font-size: 14px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 640px) { .grid2 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>web<span>ai</span></h1>
+  <p class="tagline">命令行驱动网页版免费 AI —— 把 ChatGPT / Grok / Kimi / GLM 变成你的终端工具</p>
+  <div class="badges">
+    <a href="https://github.com/wajipu/webai">GitHub 仓库</a>
+    <a href="https://github.com/wajipu/webai/releases">Releases 下载</a>
+  </div>
+</header>
+
+<section>
+  <h2><span class="no">01</span>它解决什么问题</h2>
+  <div class="panel">
+    <p>免费的网页 AI 没有公开 API,只有浏览器里的界面。webai 通过一个 Chrome 扩展桥接你的命令行和网页 AI:<strong>终端发消息,网页 AI 处理,回复取回终端</strong>。</p>
+    <p style="margin-top:10px">复用你已登录的会话,不抓包、不逆向接口、不写 token —— 就像你自己在网页里打字。</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="no">02</span>运行流程</h2>
+  <p class="sub">一条消息从终端出发,走完整个链路后把结果带回</p>
+  <div class="flow">
+    <div class="node"><b>webai ask "…"</b><span>命令行 / CLI</span></div>
+    <div class="arrow">▼<span class="tag">① 发送 {type:"ask", id, payload}</span></div>
+    <div class="node rust"><b>Rust 守护进程</b><span>ws://127.0.0.1:8765 按 id 路由</span></div>
+    <div class="arrow">▼<span class="tag">② 转发给扩展(心跳保活)</span></div>
+    <div class="node ext"><b>Chrome 扩展 (MV3)</b><span>找/开标签页 → 内容脚本按站点分发</span></div>
+    <div class="arrow">▼<span class="tag">③ execCommand('insertText') 注入输入框 → 点发送</span></div>
+    <div class="node ai"><b>网页版 AI</b><span>chatgpt.com / grok.com / kimi.com / chatglm.cn</span></div>
+    <div class="arrow">▲<span class="tag">④ 轮询:停止按钮消失 + 回复连续 3 轮不变</span></div>
+    <div class="node"><b>提取回复 (Markdown)</b><span>+ 会话 URL + 站点</span></div>
+    <div class="arrow">▲<span class="tag">⑤ {type:"ask_result", ok, data} 原路返回</span></div>
+    <div class="node"><b>终端打印结果</b><span>--json 输出结构化 JSON</span></div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="no">03</span>约束注入(话题绑定)</h2>
+  <div class="panel">
+    <p>本地 skills / 约束文件按话题绑定:<strong>首次初始化时注入一次,之后同话题自动跳过</strong>。</p>
+    <ul style="padding-left:20px; margin-top:10px">
+      <li>状态存本地 <code>~/.webai/conversations.json</code> + 内容指纹</li>
+      <li>约束文件变了 → 指纹变化 → 自动重新注入</li>
+      <li><code>--reinit</code> 强制重注入(聊久了/换模型后)</li>
+    </ul>
+  </div>
+</section>
+
+<section>
+  <h2><span class="no">04</span>快速开始</h2>
+  <div class="panel">
+    <ol class="steps">
+      <li><strong>下载二进制</strong><br>
+        <pre><code>curl -fsSL https://raw.githubusercontent.com/wajipu/webai/main/install.sh | bash
+export PATH="$HOME/.webai/bin:$PATH"</code></pre>
+      </li>
+      <li><strong>启动守护进程</strong>
+        <pre><code>webai serve</code></pre>
+      </li>
+      <li><strong>加载 Chrome 扩展</strong><br>解压 <code>webai-extension.zip</code> → <code>chrome://extensions</code> → 开发者模式 → 加载已解压的扩展程序(图标变 ON)</li>
+      <li><strong>浏览器里登录一次</strong>目标 AI 站点</li>
+      <li><strong>提问</strong>
+        <pre><code>webai ask "用一句话解释 Rust 所有权"
+webai ask --site kimi "你好"
+webai ask --conversation https://chatgpt.com/c/xxx --system rules.md --skills ~/.claude/skills "开始干活"</code></pre>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<section>
+  <h2><span class="no">05</span>支持站点</h2>
+  <div class="grid2">
+    <div class="panel"><b>chatgpt</b><br><span style="color:var(--muted)">chatgpt.com</span><br><span class="ok">✔ 已实测适配</span></div>
+    <div class="panel"><b>grok</b><br><span style="color:var(--muted)">grok.com / x.com</span><br><span class="warn">⚠ 选择器待实测校准</span></div>
+    <div class="panel"><b>kimi</b><br><span style="color:var(--muted)">kimi.com</span><br><span class="warn">⚠ 选择器待实测校准</span></div>
+    <div class="panel"><b>glm</b><br><span style="color:var(--muted)">chatglm.cn / z.ai</span><br><span class="warn">⚠ 选择器待实测校准</span></div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="no">06</span>线协议(JSON over WebSocket)</h2>
+  <div class="panel">
+<pre><code>→ { "type": "hello", "role": "cli" | "extension" }
+→ { "type": "ask", "id": "uuid", "payload": { "message", "conversation?", "site?", "timeout_ms?" } }
+← { "type": "ask_result", "id", "ok": true, "data": { "text", "url", "title", "site" } }
+← { "type": "ask_result", "id", "ok": false, "error": { "code", "message" } }</code></pre>
+    <p style="margin-top:10px;color:var(--muted);font-size:13px">错误码:NO_EXTENSION · BUSY · LOGIN_REQUIRED · SITE_DRIFT · TIMEOUT</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="no">07</span>设计要点</h2>
+  <div class="panel">
+    <table>
+      <tr><th>问题</th><th>方案</th></tr>
+      <tr><td>MV3 空闲 30s 回收 service worker</td><td><code>chrome.alarms</code> 定时 ping 保活</td></tr>
+      <tr><td>ProseMirror 等富文本不认直接赋值</td><td><code>execCommand('insertText')</code> 触发原生输入事件</td></tr>
+      <tr><td>AI"半句假完成"</td><td>停止按钮消失 + 文本连续 3 轮稳定</td></tr>
+      <tr><td>站点改版</td><td>选择器集中在 <code>adapters/</code>,每站一个文件</td></tr>
+      <tr><td>扩展无法监听端口</td><td>扩展主动外连 daemon(127.0.0.1)</td></tr>
+    </table>
+  </div>
+</section>
+
+<footer>
+  webai · Apache-2.0 · <a style="color:var(--accent)" href="https://github.com/wajipu/webai">github.com/wajipu/webai</a>
+</footer>
+
+</div>
+</body>
+</html>
