@@ -106,6 +106,10 @@ async fn chat_completions(
             m.text().hash(&mut hasher);
         }
         let fp = hasher.finish();
+        // IMPORTANT: forward ONLY the user's actual input, verbatim.
+        // System prompts / constraints are NOT injected into the web page —
+        // pasting a big machine-generated preamble would look like a bot
+        // and risk the account being flagged.
         let user_msg = req
             .messages
             .iter()
@@ -113,21 +117,6 @@ async fn chat_completions(
             .last()
             .map(|m| m.text())
             .unwrap_or_default();
-        let system_parts: Vec<String> = req
-            .messages
-            .iter()
-            .filter(|m| m.role == "system" && !m.text().trim().is_empty())
-            .map(|m| m.text())
-            .collect();
-        let user_msg = if system_parts.is_empty() {
-            user_msg
-        } else {
-            format!(
-                "[SYSTEM CONSTRAINTS]\n{}\n\n[END CONSTRAINTS]\n\n{}",
-                system_parts.join("\n\n"),
-                user_msg
-            )
-        };
         (user_msg, fp)
     };
 

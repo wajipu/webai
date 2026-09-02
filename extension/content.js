@@ -103,18 +103,14 @@ async function handleAsk(msg) {
     };
   }
 
-  // ---- type the message (rich editors accept execCommand('insertText'),
-  // which fires real beforeinput/input events)
+  // ---- type the message. execCommand('insertText') behaves like real
+  // keyboard input (fires native beforeinput/input), which is what rich
+  // editors accept. Only if it didn't stick (framework-controlled textarea)
+  // do we fall back to setting .value directly.
   composer.focus();
   document.execCommand('insertText', false, message);
-  // belt & braces: for plain <textarea> composers (Vue/React controlled),
-  // set .value directly and fire input/change so the framework updates its
-  // state (e.g. removes a disabled `empty` class from the send button)
-  if (composer.value !== undefined) {
+  if (composerText(composer) !== message) {
     composer.value = message;
-    composer.dispatchEvent(new Event('input', { bubbles: true }));
-    composer.dispatchEvent(new Event('change', { bubbles: true }));
-  } else {
     composer.dispatchEvent(new Event('input', { bubbles: true }));
   }
 
