@@ -25,7 +25,14 @@ webai serve
 
 # 4. 提问
 webai ask "用一句话解释什么是 Rust 的所有权"
+
+# 用其他网页 AI(需要先在对应站点登录一次)
+webai ask --site grok "你好"        # grok.com
+webai ask --site kimi "你好"        # kimi.com
+webai ask --site glm "你好"         # chatglm.cn
 ```
+
+> 多站点适配器:每个站点独立选择器,在 `extension/adapters/` 里;新站点没适配前会走启发式通用适配器。若某站点 DOM 改了,改对应 adapter 的 `sel` 即可。
 
 其他平台:Release 资产里有 `webai-darwin-arm64`、`webai-darwin-x64`、`webai-linux-x64`、`webai-win-x64.exe`。
 

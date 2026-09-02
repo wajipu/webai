@@ -1,22 +1,30 @@
-// WebAI Bridge — chatgpt.com adapter (content script, isolated world).
+// WebAI Bridge — content script dispatcher + shared engine.
 //
-// Site contract (all brittle selectors live here so the rest of the system
-// only deals with the protocol):
-//   composer   : the ProseMirror contenteditable at the bottom of the page
-//   send       : the submit button
-//   generating : stop button / streaming marker presence
-//   assistant  : latest assistant turn element
+// Loaded on every matched host. Picks the right adapter by hostname
+// (chatgpt.com / grok.com / kimi.com / chatglm.cn / generic fallback) and
+// drives the conversation with the shared engine below.
 //
-// When ChatGPT redesigns their DOM, only this file should need changes.
+// The engine is deliberately site-agnostic: it only uses what the adapter
+// declares (selectors + isLoginWall()).
 
-const SEL = {
-  composer: '#prompt-textarea[contenteditable="true"], div[contenteditable="true"]#prompt-textarea, form textarea#prompt-textarea',
-  sendButton: '[data-testid="send-button"]',
-  stopButton: '[data-testid="stop-button"], button[aria-label*="Stop generating"], button[data-testid="pill-stop-generating"]',
-  userMsg: '[data-message-author-role="user"]',
-  assistantMsg: '[data-message-author-role="assistant"]',
-  loginLink: 'a[href*="/auth"], button[data-testid="login-button"]',
+const ADAPTERS = {
+  'chatgpt.com': 'chatgpt',
+  'chat.openai.com': 'chatgpt',
+  'grok.com': 'grok',
+  'x.com': 'grok',
+  'kimi.com': 'kimi',
+  'moonshot.cn': 'kimi',
+  'chatglm.cn': 'glm',
+  'z.ai': 'glm',
 };
+
+function currentAdapter() {
+  const host = location.hostname.replace(/^www\./, '');
+  const key = ADAPTERS[host] || 'generic';
+  const adapters = window.WebAIAdapters || {};
+  if (adapters[key]) return adapters[key];
+  return adapters.generic;
+}
 
 function $(sel) {
   return document.querySelector(sel);
@@ -45,7 +53,7 @@ async function waitFor(fn, timeoutMs, intervalMs = 500) {
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (!msg) return false;
   if (msg.type === 'probe') {
-    sendResponse({ ok: true, onChatGpt: true });
+    sendResponse({ ok: true, onWebAI: true });
     return false;
   }
   if (msg.type === 'ask') {
@@ -61,51 +69,58 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
 async function handleAsk(msg) {
   const { message, timeout_ms: timeoutMs = 300000 } = msg.payload;
+  const adapter = currentAdapter();
+  const sel = adapter.sel;
 
   const composer = await waitFor(() => {
-    const el = $(SEL.composer);
+    const el = $(sel.composer);
     return visible(el) ? el : null;
   }, 25000);
 
   if (!composer) {
-    // maybe a login wall
-    const bodyText = document.body ? document.body.innerText : '';
-    if (bodyText.includes('Log in') || bodyText.includes('Sign up') || $(SEL.loginLink)) {
+    if (adapter.isLoginWall && adapter.isLoginWall()) {
       return {
         ok: false,
         error: {
           code: 'LOGIN_REQUIRED',
-          message: 'chatgpt.com is not logged in — open the tab and sign in once',
+          message: `not logged in on ${location.hostname} — open the tab and sign in once`,
         },
       };
     }
     return {
       ok: false,
-      error: { code: 'SITE_DRIFT', message: 'composer not found — ChatGPT UI may have changed' },
+      error: {
+        code: 'SITE_DRIFT',
+        message: `composer not found on ${location.hostname} (${adapter.name} adapter)`,
+      },
     };
   }
 
-  // ---- type the message (ProseMirror accepts execCommand('insertText'),
+  // ---- type the message (rich editors accept execCommand('insertText'),
   // which fires real beforeinput/input events)
   composer.focus();
   document.execCommand('insertText', false, message);
 
-  // ---- send
-  const sent = await waitFor(async () => {
-    const btn = $(SEL.sendButton);
+  // ---- send (prefer a dedicated send button; fall back to Enter)
+  const sent = await waitFor(() => {
+    const btn = $(sel.sendButton);
     if (btn && visible(btn) && !btn.disabled) {
       btn.click();
       return true;
     }
-    // if there is no dedicated send button, try Enter on the composer
     return null;
   }, 15000, 400);
 
   if (!sent) {
-    // composer may have auto-sent via keyboard already; verify it cleared
     await sleep(2000);
     if (composer.innerText.trim().length > 0) {
-      return { ok: false, error: { code: 'SITE_DRIFT', message: 'send button not found' } };
+      return {
+        ok: false,
+        error: {
+          code: 'SITE_DRIFT',
+          message: 'send button not found; composer did not clear either',
+        },
+      };
     }
   }
 
@@ -118,21 +133,24 @@ async function handleAsk(msg) {
   let stableRounds = 0;
 
   while (Date.now() < deadline) {
-    const generating = !!$(SEL.stopButton) || !!document.querySelector('.result-streaming');
-    const assistants = document.querySelectorAll(SEL.assistantMsg);
-    const last = assistants.length ? assistants[assistants.length - 1] : null;
+    const generating = !!$(sel.stopButton) || !!document.querySelector('.result-streaming');
+    const nodes = document.querySelectorAll(sel.assistantMsg);
+    const last = nodes.length ? nodes[nodes.length - 1] : null;
     const text = last ? last.innerText.trim() : '';
 
     if (!generating && text.length > 0) {
       if (text === lastText) {
         stableRounds++;
         if (stableRounds >= 3) {
-          const data = {
-            text,
-            url: location.href,
-            title: document.title,
+          return {
+            ok: true,
+            data: {
+              text,
+              url: location.href,
+              title: document.title,
+              site: adapter.name,
+            },
           };
-          return { ok: true, data };
         }
       } else {
         lastText = text;
@@ -149,7 +167,7 @@ async function handleAsk(msg) {
     ok: false,
     error: {
       code: 'TIMEOUT',
-      message: `no stable reply within ${Math.round(timeoutMs / 1000)}s`,
+      message: `no stable reply within ${Math.round(timeoutMs / 1000)}s (${adapter.name})`,
     },
   };
 }

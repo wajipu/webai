@@ -7,7 +7,26 @@
 //   3. Keep the service worker alive with chrome.alarms-driven pings.
 
 const DEFAULT_WS_URL = 'ws://127.0.0.1:8765';
-const GPT_URL = 'https://chatgpt.com/';
+
+// site key -> { urls (tab match patterns), home (default tab to open) }
+const SITES = {
+  chatgpt: {
+    urls: ['https://chatgpt.com/*', 'https://chat.openai.com/*'],
+    home: 'https://chatgpt.com/',
+  },
+  grok: {
+    urls: ['https://grok.com/*', 'https://x.com/*'],
+    home: 'https://grok.com/',
+  },
+  kimi: {
+    urls: ['https://kimi.com/*', 'https://moonshot.cn/*'],
+    home: 'https://kimi.com/',
+  },
+  glm: {
+    urls: ['https://chatglm.cn/*', 'https://z.ai/*'],
+    home: 'https://chatglm.cn/',
+  },
+};
 
 let ws = null;
 let wsState = 'disconnected'; // disconnected | connecting | connected
@@ -135,7 +154,8 @@ async function handleAsk(msg) {
 
 async function runAsk(id, payload) {
   const timeoutMs = payload.timeout_ms || 300000;
-  const tab = await ensureGptTab(payload.conversation || null);
+  const site = payload.site || 'chatgpt';
+  const tab = await ensureSiteTab(site, payload.conversation || null);
 
   // wait for the content script to be alive (tab may pre-date the extension)
   await waitContentScriptReady(tab.id);
@@ -150,7 +170,7 @@ async function runAsk(id, payload) {
     },
   });
   if (!resp) {
-    throw new Error('no response from page — did chatgpt.com change its DOM?');
+    throw new Error('no response from page — did the site change its DOM?');
   }
   if (resp.ok) {
     return { ok: true, data: resp.data };
@@ -158,8 +178,9 @@ async function runAsk(id, payload) {
   return { ok: false, error: resp.error };
 }
 
-async function ensureGptTab(conversationUrl) {
-  const tabs = await chrome.tabs.query({ url: ['https://chatgpt.com/*', 'https://chat.openai.com/*'] });
+async function ensureSiteTab(site, conversationUrl) {
+  const cfg = SITES[site] || SITES.chatgpt;
+  const tabs = await chrome.tabs.query({ url: cfg.urls });
   if (conversationUrl) {
     const want = new URL(conversationUrl);
     const match = tabs.find((t) => t.url && new URL(t.url).pathname === want.pathname);
@@ -175,7 +196,7 @@ async function ensureGptTab(conversationUrl) {
     await chrome.tabs.update(tabs[0].id, { active: true });
     return tabs[0];
   }
-  const created = await chrome.tabs.create({ url: GPT_URL, active: true });
+  const created = await chrome.tabs.create({ url: cfg.home, active: true });
   await waitTabLoaded(created.id);
   return created;
 }

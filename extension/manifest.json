@@ -1,20 +1,40 @@
 {
   "manifest_version": 3,
   "name": "WebAI Bridge",
-  "version": "0.1.0",
-  "description": "Local bridge: lets the webai CLI drive your logged-in chatgpt.com tab and read replies back",
+  "version": "0.2.0",
+  "description": "Local bridge: lets the webai CLI drive your logged-in web AI tabs (ChatGPT / Grok / Kimi / GLM) and read replies back",
   "permissions": ["storage", "tabs", "alarms", "scripting"],
   "host_permissions": [
     "https://chatgpt.com/*",
-    "https://chat.openai.com/*"
+    "https://chat.openai.com/*",
+    "https://grok.com/*",
+    "https://x.com/*",
+    "https://kimi.com/*",
+    "https://moonshot.cn/*",
+    "https://chatglm.cn/*",
+    "https://z.ai/*"
   ],
   "background": {
     "service_worker": "background.js"
   },
   "content_scripts": [
     {
-      "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*"],
-      "js": ["content.js"],
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*",
+        "https://grok.com/*",
+        "https://x.com/*",
+        "https://kimi.com/*",
+        "https://moonshot.cn/*",
+        "https://chatglm.cn/*",
+        "https://z.ai/*"
+      ],
+      "js": [
+        "adapters/generic.js",
+        "adapters/sites.js",
+        "adapters/chatgpt.js",
+        "content.js"
+      ],
       "run_at": "document_idle"
     }
   ],

@@ -38,6 +38,9 @@ pub struct AskPayload {
     pub conversation: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u64>,
+    /// Site key: chatgpt | grok | kimi | glm (default chatgpt)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub site: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

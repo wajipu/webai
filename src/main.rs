@@ -49,6 +49,9 @@ enum Command {
         /// Continue an existing conversation by its URL
         #[arg(long)]
         conversation: Option<String>,
+        /// Site key: chatgpt (default) | grok | kimi | glm
+        #[arg(long, default_value = "chatgpt")]
+        site: String,
         /// Force re-inject constraints even if this conversation is already initialized
         #[arg(long)]
         reinit: bool,
@@ -85,9 +88,10 @@ async fn main() {
             json,
             conversation,
             reinit,
+            site,
             system,
             skills,
-        } => cmd_ask(&message, port, timeout, json, conversation, reinit, &system, &skills)
+        } => cmd_ask(&message, port, timeout, json, conversation, reinit, &site, &system, &skills)
             .await
             .err()
             .map(|e| e.to_string()),
@@ -108,6 +112,7 @@ async fn cmd_ask(
     json: bool,
     conversation: Option<String>,
     reinit: bool,
+    site: &str,
     system: &[String],
     skills: &[String],
 ) -> anyhow::Result<()> {
@@ -135,7 +140,7 @@ async fn cmd_ask(
                     } else {
                         eprintln!("→ injecting constraints into {key} (fingerprint {fp})…");
                     }
-                    send_one(port, conversation.clone(), text, timeout_secs, true).await?;
+                    send_one(port, conversation.clone(), text, timeout_secs, site, true).await?;
                     state::mark_initialized(key, fp)?;
                     eprintln!("→ constraints injected, marked {key} initialized");
                 }
@@ -143,12 +148,12 @@ async fn cmd_ask(
             None => {
                 // brand-new conversation each time: inject before every ask
                 eprintln!("→ injecting constraints (new conversation)…");
-                send_one(port, None, text, timeout_secs, true).await?;
+                send_one(port, None, text, timeout_secs, site, true).await?;
             }
         }
     }
 
-    send_one(port, conversation, message, timeout_secs, false)
+    send_one(port, conversation, message, timeout_secs, site, false)
         .await
         .and_then(|d| {
             if json {
@@ -170,6 +175,7 @@ async fn send_one(
     conversation: Option<String>,
     message: &str,
     timeout_secs: u64,
+    site: &str,
     quiet: bool,
 ) -> anyhow::Result<AskResultData> {
     let url = format!("ws://127.0.0.1:{port}");
@@ -186,6 +192,7 @@ async fn send_one(
             "message": message,
             "conversation": conversation,
             "timeout_ms": timeout_secs * 1000,
+            "site": site,
         }
     });
     send_json(&mut ws, &ask).await?;
