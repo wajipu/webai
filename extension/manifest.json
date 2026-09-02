@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "WebAI Bridge",
-  "version": "0.2.0",
+  "version": "0.2.3",
   "description": "Local bridge: lets the webai CLI drive your logged-in web AI tabs (ChatGPT / Grok / Kimi / GLM) and read replies back",
   "permissions": ["storage", "tabs", "alarms", "scripting"],
   "host_permissions": [
